@@ -1,0 +1,78 @@
+#!/usr/bin/env ruby
+
+require 'nokogiri'
+
+# .idea/workspace.xml
+# /project/component[@name="projectView"]/navigator/
+# <autoscrollToSource ProjectPane="true" />
+# <autoscrollFromSource ProjectPane="true" />
+#perl -i -pe '
+  #s[<(autoscrollToSource|autoscrollFromSource) />][<$1 ProjectPane="true" />];
+#' .idea/workspace.xml
+
+def rewrite_xml_if_exists(filename)
+  tmpfile = filename + ".tmp"
+
+  doc = begin
+          Nokogiri::XML(IO.read filename)
+        rescue Errno::ENOENT
+          return
+        end
+  begin
+    doc = yield doc
+    IO.write(tmpfile, doc.to_xml)
+    File.chmod 0644, tmpfile
+    # system "diff", "-u", filename, tmpfile
+    File.rename tmpfile, filename
+  rescue Exception => e
+    $stderr.puts "Ignoring error: #{e.inspect}"
+  end
+end
+
+rewrite_xml_if_exists ".idea/workspace.xml" do |doc|
+  doc.xpath(%q</project/component[@name="ProjectView"]/navigator/autoscrollToSource>).first.set_attribute("ProjectPane", "true")
+  doc.xpath(%q</project/component[@name="ProjectView"]/navigator/autoscrollFromSource>).first.set_attribute("ProjectPane", "true")
+  doc
+end
+
+rewrite_xml_if_exists ".idea/codeStyleSettings.xml" do |doc|
+  if !File.exist? "#{ENV["HOME"]}/Library/Preferences/IdeaIC2016.1/codestyles/modav.xml"
+    raise "'modav' code style doesn't exist - see #{__FILE__}"
+  end
+
+  ele = doc.xpath(%q{/project/component[@name="ProjectCodeStyleSettingsManager"]/option[@name="PREFERRED_PROJECT_CODE_STYLE"]}).first
+  if ele
+    # We assume that the "modav" code style exists
+    # ~/Library/Preferences/IdeaIC2016.1/codestyles/modav.xml
+    ele.set_attribute("value", "modav")
+  else
+    # TODO create it
+  end
+  doc
+end
+
+intellij_app_name = Dir.open("/Applications").select {|n| n.include? "IntelliJ"}.sort.last
+if intellij_app_name.nil?
+  raise "Couldn't find IntelliJ app"
+end
+intellij_app_name.gsub! ".app", ""
+
+puts "Going to launch '#{intellij_app_name}'"
+
+if ARGV.empty? and File.exist? ".idea"
+  ARGV.replace [ ENV["PWD"] ]
+end
+
+if ARGV.empty? and File.exist? "build.gradle"
+  ARGV.replace [ ENV["PWD"]+"/"+"build.gradle" ]
+end
+
+if ARGV.empty? and File.exist? "pom.xml"
+  ARGV.replace [ ENV["PWD"]+"/"+"pom.xml" ]
+end
+
+p ARGV
+
+ENV["JAVA_TOOL_OPTIONS"] = (ENV["JAVA_TOOL_OPTIONS"]||"") + " -Djava.awt.headless=false"
+
+exec "open", "-a", intellij_app_name, *ARGV
